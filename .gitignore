@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+
+# Virtual environment
+venv/
+.env
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+
+# Secrets
+gcloud_key.json
+*.pem
+*.key
+*.crt
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,8 @@
+msgid "Welcome to Internship Finder"
+msgstr "इंटर्नशिप फाइंडर में आपका स्वागत है"
+
+msgid "Enter your skills"
+msgstr "अपनी कौशल जानकारी दर्ज करें"
+
+msgid "Submit"
+msgstr "सबमिट करें"

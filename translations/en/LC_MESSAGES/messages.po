@@ -1,0 +1,8 @@
+msgid "Welcome to Internship Finder"
+msgstr "Welcome to Internship Finder"
+
+msgid "Enter your skills"
+msgstr "Enter your skills"
+
+msgid "Submit"
+msgstr "Submit"

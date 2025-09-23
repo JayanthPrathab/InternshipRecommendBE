@@ -1,0 +1,11 @@
+msgid "Welcome to Internship Finder"
+msgstr "இன்டர்ன்ஷிப் ஃபைண்டரில் உங்களை வரவேற்கிறோம்"
+
+msgid "Enter your skills"
+msgstr "உங்கள் திறன்களை உள்ளிடவும்"
+
+msgid "Submit"
+msgstr "சமர்ப்பி"
+
+msgid "Login Portal"
+msgstr "உள்நுழைவு போர்டல்"
