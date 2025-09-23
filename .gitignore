@@ -17,6 +17,7 @@ venv/
 
 # Secrets
 gcloud_key.json
+.env
 *.pem
 *.key
 *.crt
