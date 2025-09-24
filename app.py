@@ -16,7 +16,6 @@ load_dotenv()
 # Flask app setup
 app = Flask(__name__)
 app.config['BABEL_DEFAULT_LOCALE'] = 'en'
-babel = Babel(app)
 CORS(app)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
