@@ -62,7 +62,8 @@ class CompanyModel(BaseModel):
 
 @app.route('/')
 def home():
-    return render_template("index.html", message=_("Welcome to Internship Finder"))
+    # This route now returns a JSON object instead of an HTML page
+    return jsonify({"status": "ok", "message": "Welcome to the Internship Finder API"})
 
 @app.route("/api/register", methods=["POST"])
 def register_user():
