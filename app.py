@@ -8,13 +8,14 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
+import time     # <-- ADDED
+import random   # <-- ADDED
 
 # Load environment variables
 load_dotenv()
 
 # Flask app setup
 app = Flask(__name__)
-# Initialize CORS correctly once
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # MongoDB connection
@@ -23,7 +24,7 @@ client = MongoClient(MONGO_URI)
 db = client["sih_db"]
 candidates_col = db["candidates"]
 companies_col = db["companies"]
-applications_col = db["applications"] # <-- ADDED
+applications_col = db["applications"]
 candidate_users_col = db["candidate_users"]
 company_users_col = db["company_users"]
 
@@ -45,13 +46,15 @@ class CandidateModel(BaseModel):
     location: str
 
 class CompanyModel(BaseModel):
-    companyId: str  # <-- ADDED
+    companyId: str
     companyName: str
     jobTitle: str
     jobDescription: str
     skillsRequired: list[str] = Field(default_factory=list)
     location: str
     womenPreference: bool = False
+    openings: int = 1  # <-- ADDED
+    deadline: int = 30 # <-- ADDED
 
 # -------------------------------
 # Routes
@@ -61,6 +64,7 @@ class CompanyModel(BaseModel):
 def home():
     return jsonify({"status": "ok", "message": "Welcome to the Internship Finder API"})
 
+# ... (register_user and login_user routes are unchanged) ...
 @app.route("/api/register", methods=["POST"])
 def register_user():
     data = request.json
@@ -98,6 +102,7 @@ def login_user():
         "role": role
     }), 200
 
+# ... (candidate routes are unchanged) ...
 @app.route("/api/candidates", methods=["POST"])
 def add_or_update_candidate():
     try:
@@ -109,7 +114,7 @@ def add_or_update_candidate():
         existing = candidates_col.find_one_and_update(
             {"user_id": candidate.user_id},
             {"$set": update_data},
-            upsert=True,  # This will create the document if it doesn't exist
+            upsert=True,
             return_document=True
         )
         return jsonify({"message": "Candidate profile saved", "id": str(existing["_id"])})
@@ -126,6 +131,7 @@ def get_candidate_by_user(user_id):
     candidate["_id"] = str(candidate["_id"])
     return jsonify(candidate)
 
+# ... (internship routes are unchanged) ...
 @app.route("/api/internships", methods=["POST"])
 def add_internship():
     try:
@@ -143,7 +149,8 @@ def get_internships():
         j["_id"] = str(j["_id"])
     return jsonify(jobs)
 
-# --- Application Routes (NEW) ---
+
+# --- Application Routes (MODIFIED) ---
 
 @app.route("/api/applications", methods=["POST"])
 def submit_application():
@@ -155,9 +162,16 @@ def submit_application():
     if existing_app:
         return jsonify({"error": "You have already applied for this job"}), 409
 
+    # Generate unique application number and set status
+    timestamp = int(time.time() * 1000)
+    random_suffix = random.randint(100, 999)
+    data["applicationNumber"] = f"APP-{timestamp}{random_suffix}" # <-- MODIFIED
+    data["status"] = "Applied"                                   # <-- ADDED
+
     result = applications_col.insert_one(data)
     return jsonify({"message": "Application submitted successfully", "id": str(result.inserted_id)}), 201
 
+# ... (get_applications_by_company route is unchanged) ...
 @app.route("/api/applications/company/<company_id>", methods=["GET"])
 def get_applications_by_company(company_id):
     posted_jobs = list(companies_col.find({"companyId": company_id}))
@@ -172,9 +186,7 @@ def get_applications_by_company(company_id):
 
     return jsonify(applications)
 
-
-# --- AI Recommendation Engine ---
-
+# ... (recommendations and main are unchanged) ...
 @app.route("/api/recommendations/<candidate_id>", methods=["GET"])
 def recommend_internships(candidate_id):
     try:
@@ -226,7 +238,5 @@ def recommend_internships(candidate_id):
     ranked = sorted(results, key=lambda x: x["score"], reverse=True)
     return jsonify(ranked[:5])
 
-
-# --- Main ---
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
