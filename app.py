@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pymongo import MongoClient
 from bson import ObjectId
@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from werkzeug.security import generate_password_hash, check_password_hash
-
 import os
 
 # Load environment variables
@@ -15,16 +14,18 @@ load_dotenv()
 
 # Flask app setup
 app = Flask(__name__)
-app.config['BABEL_DEFAULT_LOCALE'] = 'en'
-CORS(app)
-CORS(app, resources={r"/*": {"origins": "*"}})
+# Initialize CORS correctly once
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 # MongoDB connection
 MONGO_URI = os.getenv("MONGODB_URI")
 client = MongoClient(MONGO_URI)
-db = client["sih_db"]  # Database name
+db = client["sih_db"]
 candidates_col = db["candidates"]
 companies_col = db["companies"]
+applications_col = db["applications"] # <-- ADDED
+candidate_users_col = db["candidate_users"]
+company_users_col = db["company_users"]
 
 # -------------------------------
 # Pydantic Schemas
@@ -33,18 +34,18 @@ companies_col = db["companies"]
 class UserModel(BaseModel):
     email: str
     password: str
-    role: str  # "candidate" or "admin"
+    role: str
 
 class CandidateModel(BaseModel):
-    user_id: str   # Mongo ObjectId as string (from users collection)
+    user_id: str
     name: str
     skills: list[str] = Field(default_factory=list)
     education: str
     stream: str
     location: str
 
-
 class CompanyModel(BaseModel):
+    companyId: str  # <-- ADDED
     companyName: str
     jobTitle: str
     jobDescription: str
@@ -52,30 +53,24 @@ class CompanyModel(BaseModel):
     location: str
     womenPreference: bool = False
 
-
 # -------------------------------
 # Routes
 # -------------------------------
-# @babel.locale_selector
-# def get_locale():
-#     return request.args.get('lang') or 'en'
 
 @app.route('/')
 def home():
-    # This route now returns a JSON object instead of an HTML page
     return jsonify({"status": "ok", "message": "Welcome to the Internship Finder API"})
 
 @app.route("/api/register", methods=["POST"])
 def register_user():
     data = request.json
-    user = UserModel(**data)
+    try:
+        user = UserModel(**data)
+    except ValidationError as e:
+        return jsonify({"error": e.errors()}), 400
 
-    if user.role == "candidate":
-        users_col = db["candidate_users"]
-    else:
-        users_col = db["company_users"]
+    users_col = candidate_users_col if user.role == "candidate" else company_users_col
 
-    # Check if email already exists
     if users_col.find_one({"email": user.email}):
         return jsonify({"error": "Email already registered"}), 400
 
@@ -91,13 +86,10 @@ def login_user():
     data = request.json
     email, password, role = data.get("email"), data.get("password"), data.get("role")
 
-    if role == "candidate":
-        users_col = db["candidate_users"]
-    else:
-        users_col = db["company_users"]
+    users_col = candidate_users_col if role == "candidate" else company_users_col
 
     user = users_col.find_one({"email": email})
-    if not user or not check_password_hash(user["password"], password):
+    if not user or not check_password_hash(user.get("password", ""), password):
         return jsonify({"error": "Invalid credentials"}), 401
 
     return jsonify({
@@ -111,21 +103,16 @@ def add_or_update_candidate():
     try:
         data = request.json
         candidate = CandidateModel(**data)
+        
+        update_data = candidate.dict(exclude_unset=True)
 
-        # Check if candidate profile already exists for this user
-        existing = candidates_col.find_one({"user_id": candidate.user_id})
-
-        if existing:
-            # Update the existing profile
-            candidates_col.update_one(
-                {"user_id": candidate.user_id},
-                {"$set": candidate.dict()}
-            )
-            return jsonify({"message": "Candidate profile updated", "id": str(existing["_id"])})
-        else:
-            # Insert new profile
-            result = candidates_col.insert_one(candidate.dict())
-            return jsonify({"message": "Candidate profile created", "id": str(result.inserted_id)}), 201
+        existing = candidates_col.find_one_and_update(
+            {"user_id": candidate.user_id},
+            {"$set": update_data},
+            upsert=True,  # This will create the document if it doesn't exist
+            return_document=True
+        )
+        return jsonify({"message": "Candidate profile saved", "id": str(existing["_id"])})
 
     except ValidationError as e:
         return jsonify({"error": e.errors()}), 400
@@ -139,7 +126,6 @@ def get_candidate_by_user(user_id):
     candidate["_id"] = str(candidate["_id"])
     return jsonify(candidate)
 
-
 @app.route("/api/internships", methods=["POST"])
 def add_internship():
     try:
@@ -150,15 +136,6 @@ def add_internship():
     except ValidationError as e:
         return jsonify({"error": e.errors()}), 400
 
-
-@app.route("/api/candidates", methods=["GET"])
-def get_candidates():
-    candidates = list(candidates_col.find())
-    for c in candidates:
-        c["_id"] = str(c["_id"])
-    return jsonify(candidates)
-
-
 @app.route("/api/internships", methods=["GET"])
 def get_internships():
     jobs = list(companies_col.find())
@@ -166,14 +143,45 @@ def get_internships():
         j["_id"] = str(j["_id"])
     return jsonify(jobs)
 
+# --- Application Routes (NEW) ---
 
-# -------------------------------
-# AI Recommendation Engine
-# -------------------------------
+@app.route("/api/applications", methods=["POST"])
+def submit_application():
+    data = request.json
+    if not all(k in data for k in ["userId", "jobId", "userName"]):
+        return jsonify({"error": "Missing required fields"}), 400
+
+    existing_app = applications_col.find_one({"userId": data["userId"], "jobId": data["jobId"]})
+    if existing_app:
+        return jsonify({"error": "You have already applied for this job"}), 409
+
+    result = applications_col.insert_one(data)
+    return jsonify({"message": "Application submitted successfully", "id": str(result.inserted_id)}), 201
+
+@app.route("/api/applications/company/<company_id>", methods=["GET"])
+def get_applications_by_company(company_id):
+    posted_jobs = list(companies_col.find({"companyId": company_id}))
+    if not posted_jobs:
+        return jsonify([])
+
+    job_ids = [str(job["_id"]) for job in posted_jobs]
+    applications = list(applications_col.find({"jobId": {"$in": job_ids}}))
+
+    for app in applications:
+        app["_id"] = str(app["_id"])
+
+    return jsonify(applications)
+
+
+# --- AI Recommendation Engine ---
 
 @app.route("/api/recommendations/<candidate_id>", methods=["GET"])
 def recommend_internships(candidate_id):
-    candidate = candidates_col.find_one({"_id": ObjectId(candidate_id)})
+    try:
+        candidate = candidates_col.find_one({"_id": ObjectId(candidate_id)})
+    except Exception:
+        return jsonify({"error": "Invalid candidate ID format"}), 400
+
     if not candidate:
         return jsonify({"error": "Candidate not found"}), 404
 
@@ -182,57 +190,43 @@ def recommend_internships(candidate_id):
         return jsonify([])
 
     candidate_loc = candidate.get("location", "").lower()
-
-    # ✅ Strict location filter
     filtered = [job for job in internships if job.get("location", "").lower() == candidate_loc]
 
     if not filtered:
-        # No jobs in candidate's preferred location
         return jsonify([])
 
-    candidate_skills = candidate.get("skills", [])
-    candidate_skill_set = set(candidate_skills)
-
+    candidate_skill_set = set(candidate.get("skills", []))
     results = []
     for job in filtered:
         job["_id"] = str(job["_id"])
-
         required_skills = set(job.get("skillsRequired", []))
-
-        # ✅ Percentage skill match
-        if required_skills:
+        
+        if not required_skills:
+            score = 0
+        else:
             matched_skills = candidate_skill_set.intersection(required_skills)
             score = (len(matched_skills) / len(required_skills)) * 100
-        else:
-            score = 0
-
+        
         if score == 0:
-            continue  # skip irrelevant jobs
+            continue
 
         job["score"] = score
-
-        # Predicted improvement
         missing_skills = required_skills - candidate_skill_set
-        predicted_skill = None
-        predicted_score = score
-
-        if missing_skills:
-            test_skill = list(missing_skills)[0]  # suggest one missing skill
+        
+        job["predictedSkill"] = list(missing_skills)[0] if missing_skills else None
+        
+        if job["predictedSkill"]:
             improved_matches = len(matched_skills) + 1
-            predicted_score = (improved_matches / len(required_skills)) * 100
-            predicted_skill = test_skill
+            job["predictedScore"] = (improved_matches / len(required_skills)) * 100
+        else:
+            job["predictedScore"] = score
 
-        job["predictedSkill"] = predicted_skill
-        job["predictedScore"] = predicted_score
         results.append(job)
 
     ranked = sorted(results, key=lambda x: x["score"], reverse=True)
     return jsonify(ranked[:5])
 
 
-
-# -------------------------------
-# Main
-# -------------------------------
+# --- Main ---
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
